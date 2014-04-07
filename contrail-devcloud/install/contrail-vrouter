@@ -1,0 +1,105 @@
+#!/bin/sh
+
+# chkconfig: 2345 9 9
+# description: Juniper Network Virtualization service offering
+ulimit -c unlimited
+#. /etc/init.d/functions
+
+LOG=/var/log/contrail-agent.log
+PID_FILE=/var/run/contrail-agent.pid
+CONF_FILE=/etc/contrail/agent.conf
+AGENT="vnswad"
+
+insert_kmod() {
+    KMOD=/lib/modules/$(uname -r)/extra/net/vrouter/vrouter.ko
+    if [ ! -e $KMOD ]; then
+       echo "Kernel module $KMOD: no such file"
+       exit 1
+    fi
+
+    insmod $KMOD
+    if [ $? != 0 ]; then
+       echo "Kernel module initialization failed"
+       exit 1
+    fi
+}
+
+admin_interface() {
+    eth=$( cat $CONF_FILE | sed -n -e "s/.*<name>\(eth[0-9.]\+\).*/\1/gp" )
+    echo $eth
+}
+
+br_interface() {
+    br=$( cat $CONF_FILE | sed -n -e "s/.*<name>\(xenbr[0-9.]\+\).*/\1/gp" )
+    echo $br
+}
+
+interface_setup() {
+    ADMIN_IF=eth0
+    UNIT=0
+    BR_IF=xenbr0
+
+    PHYSADDR=$(cat /sys/class/net/$ADMIN_IF/address)
+
+    vif --create $BR_IF --mac $PHYSADDR
+    if [ $? != 0 ]; then
+       echo "Unable to create interface $BR_IF"
+       exit 1
+    fi
+
+    vif --add $BR_IF --mac $PHYSADDR --vrf 0 --mode x --type vhost
+    if [ $? != 0 ]; then
+        echo "Unable to add interface $BR_IF to vrouter"
+        exit 1
+    fi
+
+  #  if [ -e /etc/sysconfig/network-scripts/ifcfg-$BR_IF ]; then
+    ifup $BR_IF
+   # fi
+
+}
+
+check_process()
+{
+    if [[ -n `pgrep $1` ]]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+start() {
+    check_process $AGENT
+    if [ $? -eq 1 ]; then
+        echo "$AGENT is running, use stop/start or restart"
+        exit 1
+    fi
+    kmod_present=$(lsmod | grep vrouter)
+    if [ -z "${kmod_present}" ]; then
+        insert_kmod
+        interface_setup
+    fi
+
+    /usr/bin/vnswad --config-file $CONF_FILE 1>$LOG 2>&1 &
+    echo $! >$PID_FILE
+}
+
+stop() {
+    kill `cat $PID_FILE`
+    rmmod vrouter
+}
+
+case $1 in
+    start)
+    start
+    ;;
+
+    stop)
+    stop
+    ;;
+    restart)
+    stop
+    start
+    ;;
+esac
+
