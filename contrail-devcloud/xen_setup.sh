@@ -21,7 +21,7 @@ make_directory /opt/contrail/xenserver-scripts/
 
 pushd .
 # Configuring the XenServer
-cd install
+cd compute_install
 chmod 755 *
 admin_br_name=xenbr0
 admin_if_name=eth0
